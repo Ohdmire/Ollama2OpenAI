@@ -10,6 +10,7 @@ import uvicorn
 from typing import Dict, Any, List, Optional, Union
 from config import config
 from pydantic import BaseModel
+import traceback
 
 app = FastAPI()
 client = httpx.AsyncClient()
@@ -53,9 +54,13 @@ def is_authenticated(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return True
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/admin", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
     return templates.TemplateResponse("login.html", {"request": request, "error": error})
+
+@app.get("/")
+async def root():
+    return {"status":"Ollama is running"}
 
 @app.post("/login")
 async def login(request: Request, password: str = Form(...)):
@@ -150,6 +155,7 @@ async def list_models():
             model_id = model.get("id", "")
             models.append({
                 "name": model_id,
+                "model":model_id,
                 "modified_at": model.get("created"),
                 "size": 0,
                 "digest": "",
@@ -189,8 +195,8 @@ async def chat(request: ChatRequest):
                 openai_body["temperature"] = request.options["temperature"]
             if "top_p" in request.options:
                 openai_body["top_p"] = request.options["top_p"]
-            if "num_ctx" in request.options:
-                openai_body["max_tokens"] = request.options["num_ctx"]
+            # if "num_ctx" in request.options:
+            #     openai_body["max_tokens"] = request.options["num_ctx"]
         
         # 准备请求头
         headers = {
@@ -208,6 +214,7 @@ async def chat(request: ChatRequest):
         )
         
         if response.status_code != 200:
+            print(f'错误状态码：{response.status_code}')
             error_detail = await response.text()
             print(f"OpenAI API 错误: {error_detail}")  # 添加日志
             raise HTTPException(
@@ -220,10 +227,13 @@ async def chat(request: ChatRequest):
             async def stream_response():
                 async for chunk in response.aiter_lines():
                     if chunk:
+                        if chunk == "data: [DONE]":
+                            continue  # 跳过处理结束标记 因为下面的finish_reason会处理
                         try:
                             data = json.loads(chunk.removeprefix("data: "))
                             if "choices" in data and len(data["choices"]) > 0:
                                 choice = data["choices"][0]
+                                print(choice)
                                 if "delta" in choice and "content" in choice["delta"]:
                                     yield json.dumps({
                                         "model": request.model,
@@ -265,12 +275,15 @@ async def chat(request: ChatRequest):
         
     except httpx.RequestError as e:
         print(f"请求错误: {str(e)}")  # 添加日志
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"请求 OpenAI API 失败: {str(e)}")
     except json.JSONDecodeError as e:
         print(f"JSON 解析错误: {str(e)}")  # 添加日志
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"解析 OpenAI 响应失败: {str(e)}")
     except Exception as e:
         print(f"未知错误: {str(e)}")  # 添加日志
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"处理请求时发生错误: {str(e)}")
 
 @app.post("/api/generate")
@@ -295,8 +308,8 @@ async def generate(request: GenerateRequest):
                 openai_body["temperature"] = request.options["temperature"]
             if "top_p" in request.options:
                 openai_body["top_p"] = request.options["top_p"]
-            if "num_ctx" in request.options:
-                openai_body["max_tokens"] = request.options["num_ctx"]
+            # if "num_ctx" in request.options:
+            #     openai_body["max_tokens"] = request.options["num_ctx"]
         
         # 准备请求头
         headers = {
@@ -413,4 +426,4 @@ async def create_embedding(request: EmbeddingRequest):
         raise HTTPException(status_code=500, detail=f"处理请求时发生错误: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8388)
